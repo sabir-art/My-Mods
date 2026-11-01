@@ -1,7 +1,7 @@
 {
   "name": "conso",
-  "version": "0.1.0",
-  "description": "Panneau minimaliste : contexte, tokens, cache, coût et limites de la session",
+  "version": "0.2.0",
+  "description": "Bande d'usage au-dessus de la saisie (limites 7 j / 5 h, cache) et panneau de détails",
   "types": "./types/index.d.ts",
   "license": "MIT"
 }

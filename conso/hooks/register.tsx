@@ -10,6 +10,7 @@ const ZERO: Totals = { requests: 0, input: 0, output: 0, cacheRead: 0, cacheWrit
 
 const totals = atom({ plugin: 'conso', key: 'totals' } as const, ZERO, { shape: 'totals-1' })
 const measure = atom({ plugin: 'conso', key: 'measure' } as const, null, { shape: 'measure-1' })
+const lastRequestAt = atom({ plugin: 'conso', key: 'lastRequestAt' } as const, null, { shape: 'at-1' })
 const lastTurn = atom({ plugin: 'conso', key: 'lastTurn' } as const, null, { shape: 'last-1' })
 
 // ── Formatage ────────────────────────────────────────────────────────────────
@@ -49,18 +50,49 @@ const resetIn = (iso?: string, now?: number): string => {
   return h > 0 ? `reprise ${h} h ${String(m).padStart(2, '0')}` : `reprise ${m} min`
 }
 
-const statusLine = (m: Measure | null, t: Totals): string => {
-  const parts: string[] = []
-  if (m?.contextPercent !== undefined) parts.push(`◔ ${m.contextPercent}%`)
-  const hit = hitRate(t)
-  if (hit !== undefined) parts.push(`cache ${hit}%`)
-  if (m?.costUsd !== undefined) parts.push(usd(m.costUsd))
-  return parts.join(' · ')
+// ── Bande au-dessus de la saisie ─────────────────────────────────────────────
+
+// Durée de vie du cache de prompt dans Claude Code (1 h).
+const CACHE_TTL_MS = 60 * 60 * 1000
+
+const WINDOW_COLOR: Record<string, string> = { seven_day: '#F07A3A', five_hour: '#F2B33D', spend_limit: '#E8C26A' }
+
+const shortWindow = (kind: string): string =>
+  kind === 'five_hour' ? '5H' : kind === 'seven_day' ? '7J' : kind === 'spend_limit' ? '$' : kind.toUpperCase()
+
+const span = (ms: number): string => {
+  const min = Math.max(0, Math.round(ms / 60_000))
+  const d = Math.floor(min / 1440)
+  const h = Math.floor((min % 1440) / 60)
+  const m = min % 60
+  if (d > 0) return `${d} j ${h} h`
+  if (h > 0) return `${h} h ${String(m).padStart(2, '0')}`
+  return `${m} min`
 }
 
-async function refreshStatus($: EngineInterface): Promise<void> {
-  const text = statusLine(await read($, measure), await read($, totals))
-  $.ui.status(text === '' ? undefined : text)
+const dots = (leftPercent: number, count = 10): [string, string] => {
+  const full = Math.round((Math.max(0, Math.min(100, leftPercent)) / 100) * count)
+  return ['●'.repeat(full), '·'.repeat(count - full)]
+}
+
+type CacheState = { label: string; bg: string; fg: string; left: string }
+
+const cacheState = (at: number | null, now: number): CacheState | null => {
+  if (at === null) return null
+  const leftMs = CACHE_TTL_MS - (now - at)
+  if (leftMs <= 0) return { label: 'FROID', bg: '#5B6472', fg: '#E6E9EE', left: 'expiré' }
+  const ratio = leftMs / CACHE_TTL_MS
+  if (ratio > 0.75) return { label: 'CHAUD', bg: '#E5484D', fg: '#1A1A1A', left: span(leftMs) }
+  if (ratio > 0.25) return { label: 'TIÈDE', bg: '#E07A7A', fg: '#1A1A1A', left: span(leftMs) }
+  return { label: 'FRAIS', bg: '#7AA7E0', fg: '#1A1A1A', left: span(leftMs) }
+}
+
+const invader = (color: string): string => {
+  const rows = ['00100100', '00011000', '00111100', '01011010', '11111111', '10111101', '10100101', '00011000']
+  const px = rows
+    .flatMap((r, y) => [...r].map((c, x) => (c === '1' ? `<rect x="${x}" y="${y}" width="1" height="1"/>` : '')))
+    .join('')
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8" shape-rendering="crispEdges" fill="${color}">${px}</svg>`
 }
 
 // ── Hooks ────────────────────────────────────────────────────────────────────
@@ -79,15 +111,9 @@ export const register: Register = on => {
       costUsd: u.cost?.usd,
       limits: u.rateLimits.map(r => ({ kind: r.kind, percent: r.percentUsed, resetsAt: r.resetsAt })),
     }))
-    void $.ui.open({ id: PANE, title: TITLE })
+    // Fait vivre le compte à rebours du cache.
+    $.clock.every(30_000, () => $.ui.invalidate('ui.render'))
     return next(e)
-  })
-
-  // Une interface qui se connecte plus tard reçoit le panneau automatiquement.
-  on('session.attach', async ($, e, next) => {
-    const r = await next(e)
-    void $.ui.open({ id: PANE, title: TITLE })
-    return r
   })
 
   on('command.run', { command: 'conso' }, async $ => {
@@ -116,7 +142,6 @@ export const register: Register = on => {
       costUsd: e.cost?.usd,
       limits: e.rateLimits.map(r => ({ kind: r.kind, percent: r.percentUsed, resetsAt: r.resetsAt })),
     }))
-    await refreshStatus($)
     return next(e)
   })
 
@@ -143,11 +168,57 @@ export const register: Register = on => {
         cacheWrite: turn.cacheWrite + u.cache_creation_input_tokens,
         model: u.model,
       }
+      const at = await $.clock.now()
+      await update($, lastRequestAt, () => at)
       const snapshot = turn
       await update($, lastTurn, () => snapshot)
-      await refreshStatus($)
-    }
+      }
     return result
+  })
+
+
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    if (e.props.hasSurvey) return next(e)
+    const m = await read($, measure)
+    const at = await read($, lastRequestAt)
+    const now = await $.clock.now()
+    const cache = cacheState(at, now)
+    const limits = m?.limits ?? []
+    if (limits.length === 0 && cache === null) return next(e)
+
+    const table = $.ui.resolve(e)
+    const { Box, Text, Button } = table
+    const Svg = 'Svg' in table ? table.Svg : undefined
+    const order = ['seven_day', 'five_hour', 'spend_limit']
+    const sorted = [...limits].sort((x, y) => order.indexOf(x.kind) - order.indexOf(y.kind))
+
+    return (
+      <Box flexDirection="row" alignItems="center" flexWrap="wrap" columnGap={3} rowGap={0} paddingX={1}>
+        <Text bold>USAGE</Text>
+        {sorted.map(l => {
+          const left = Math.max(0, Math.round(100 - l.percent))
+          const color = left <= 15 ? '#E5484D' : WINDOW_COLOR[l.kind] ?? '#F2B33D'
+          const [filled, empty] = dots(left)
+          const reset = l.resetsAt ? span(Date.parse(l.resetsAt) - now) : ''
+          return (
+            <Box key={l.kind} flexDirection="row" alignItems="center" gap={1}>
+              <Text dimColor bold>{shortWindow(l.kind)}</Text>
+              <Text color={color}>{filled}<Text dimColor>{empty}</Text></Text>
+              <Text bold tabular color={color}>{`${left} % restant`}</Text>
+              {reset !== '' && <Text dimColor tabular>{`· ${reset}`}</Text>}
+            </Box>
+          )
+        })}
+        {cache && (
+          <Box key="cache" flexDirection="row" alignItems="center" gap={1}>
+            {Svg ? <Svg source={invader(cache.bg)} alt="Cache" width={18} height={18} /> : <Text color={cache.bg}>◆</Text>}
+            <Text bold backgroundColor={cache.bg} color={cache.fg}>{` ${cache.label} `}</Text>
+            <Text bold tabular color={cache.bg}>{cache.left === 'expiré' ? 'expiré' : `${cache.left} restant`}</Text>
+          </Box>
+        )}
+        <Button key="details" label="Détails" variant="secondary" onPress={() => void $.ui.open({ id: PANE, title: TITLE })} />
+      </Box>
+    )
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {

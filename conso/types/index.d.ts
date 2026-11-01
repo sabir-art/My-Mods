@@ -24,6 +24,7 @@ declare module 'claude-code' {
       totals: Shaped<Totals>
       measure: Shaped<Measure | null>
       lastTurn: Shaped<LastTurn | null>
+      lastRequestAt: Shaped<number | null>
     }
   }
 }
