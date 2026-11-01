@@ -1,0 +1,7 @@
+{
+  "name": "my-mods",
+  "owner": { "name": "sabir-art" },
+  "plugins": [
+    { "name": "conso", "source": "./conso", "description": "Panneau minimaliste : contexte, tokens, cache, coût et limites de la session" }
+  ]
+}
