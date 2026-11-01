@@ -8,6 +8,11 @@
       "name": "conso",
       "source": "./conso",
       "description": "Bande d'usage au-dessus de la saisie (limites 7 j / 5 h, cache) et panneau de détails"
+    },
+    {
+      "name": "equipes",
+      "source": "./equipes",
+      "description": "Panneau des conversations d'équipe : statut, tâche en cours, contexte, sous-agents"
     }
   ]
 }

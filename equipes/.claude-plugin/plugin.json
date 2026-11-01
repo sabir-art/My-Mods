@@ -1,0 +1,7 @@
+{
+  "name": "equipes",
+  "version": "0.1.0",
+  "description": "Panneau qui suit les conversations d'équipe (statut, tâche en cours, contexte) et les sous-agents de la session",
+  "license": "MIT",
+  "types": "./types/index.d.ts"
+}

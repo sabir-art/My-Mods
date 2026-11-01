@@ -4,6 +4,7 @@ Mods personnels pour Claude Code.
 
 | Mod | Rôle |
 |---|---|
+| [equipes](equipes/) | Panneau des conversations d'équipe : statut, tâche en cours, modèle, contexte et sous-agents. Commande `/equipes`. |
 | [conso](conso/) | Panneau minimaliste : coût, contexte, tokens, cache et limites du compte de la session. Commande `/conso`. |
 
 ## Installation
@@ -12,6 +13,7 @@ Dans une session Claude Code (terminal) :
 
 ```
 /plugin install conso --marketplace sabir-art/my-mods
+/plugin install equipes --marketplace sabir-art/my-mods
 ```
 
 Depuis un shell :
